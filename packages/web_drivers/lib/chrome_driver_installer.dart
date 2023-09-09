@@ -43,15 +43,17 @@ class ChromeDriverInstaller {
     final versions = (decodedBody['versions'] as List)
         .whereType<Map<String, dynamic>>()
         .toList();
-    for (var versionInfo in versions) {
-      final chromedriver = versionInfo['downloads']?['chromedriver'] as List?;
-      if (versionInfo != chromeDriverVersion || chromedriver == null) {
+    for (final Map<String, dynamic> versionInfo in versions) {
+      final chromedriver = (versionInfo['downloads']?['chromedriver'] as List?)
+          ?.whereType<Map<String, dynamic>>()
+          .toList();
+      final version = versionInfo['version'] as String?;
+      if (chromedriver == null ||
+          version == null ||
+          !version.startsWith(chromeDriverVersion)) {
         continue;
       }
       for (var platformInfo in chromedriver) {
-        if (platformInfo is! Map<String, dynamic>) {
-          continue;
-        }
         if (platformInfo['platform'] == platformName) {
           return platformInfo['url'];
         }
@@ -97,6 +99,13 @@ class ChromeDriverInstaller {
     }
   }
 
+  String _removeTrailing(String pattern, String from) {
+    if (pattern.isEmpty) return from;
+    var i = from.length;
+    while (from.startsWith(pattern, i - pattern.length)) i -= pattern.length;
+    return from.substring(0, i);
+  }
+
   Future<void> _installDriver() async {
     // If this method is called, clean the previous installations.
     if (isInstalled) {
@@ -106,22 +115,29 @@ class ChromeDriverInstaller {
     // Figure out which driver version to install if it's not given during
     // initialization.
     if (chromeDriverVersion.isEmpty) {
-      final int chromeVersion = await _querySystemChromeVersion();
+      // chromedriver version sometimes removes trailing zeros.
+      final String chromeVersionString =
+          _removeTrailing('0', await _queryFullSystemChromeVersion());
+      final String versionNo = chromeVersionString.split('.')[0];
+      final chromeVersion = int.parse(versionNo);
 
       if (chromeVersion < 74) {
         throw Exception('Unsupported Chrome version: $chromeVersion');
       }
-
-      final YamlMap browserLock = DriverLock.instance.configuration;
-      final YamlMap chromeDrivers = browserLock['chrome'];
-      final String? chromeDriverVersion = chromeDrivers[chromeVersion];
-      if (chromeDriverVersion == null) {
-        throw Exception(
-          'No known chromedriver version for Chrome version $chromeVersion.\n'
-          'Known versions are:\n${chromeDrivers.entries.map((e) => '${e.key}: ${e.value}').join('\n')}',
-        );
+      if (chromeVersion < 115) {
+        final YamlMap browserLock = DriverLock.instance.configuration;
+        final YamlMap chromeDrivers = browserLock['chrome'];
+        final String? chromeDriverVersion = chromeDrivers[chromeVersion];
+        if (chromeDriverVersion == null) {
+          throw Exception(
+            'No known chromedriver version for Chrome version $chromeVersion.\n'
+            'Known versions are:\n${chromeDrivers.entries.map((e) => '${e.key}: ${e.value}').join('\n')}',
+          );
+        } else {
+          this.chromeDriverVersion = chromeDriverVersion;
+        }
       } else {
-        this.chromeDriverVersion = chromeDriverVersion;
+        this.chromeDriverVersion = chromeVersionString;
       }
     }
 
@@ -137,7 +153,7 @@ class ChromeDriverInstaller {
     await _uncompress();
   }
 
-  Future<int> _querySystemChromeVersion() async {
+  Future<String> _queryFullSystemChromeVersion() async {
     String chromeExecutable = '';
     if (io.Platform.isLinux) {
       chromeExecutable = 'google-chrome';
@@ -160,10 +176,7 @@ class ChromeDriverInstaller {
 
     // Version number such as 79.0.3945.36.
     final String versionAsString = output.split(' ')[2];
-
-    final String versionNo = versionAsString.split('.')[0];
-
-    return int.parse(versionNo);
+    return versionAsString;
   }
 
   /// Find Google Chrome App on Mac.
