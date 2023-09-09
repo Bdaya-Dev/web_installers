@@ -241,15 +241,13 @@ class ChromeDriverInstaller {
       return;
     }
     actualDriverDir = entries.whereType<io.Directory>().first;
-    
   }
 
   Future<void> runDriver() async {
-    if (io.Directory('chromedriver').existsSync()) {
-      //use old structure
-      await io.Process.run(
-          'chromedriver/chromedriver', <String>['--port=4444']);
-    } else {}
+    await io.Process.run(
+      installation.absolute.path,
+      <String>['--port=4444'],
+    );
   }
 
   /// Driver name for operating system.
