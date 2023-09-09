@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:http/http.dart';
@@ -17,15 +18,47 @@ class ChromeDriverInstaller {
   /// Installation directory for Chrome Driver.
   final io.Directory driverDir = io.Directory('chromedriver');
 
-  static const String chromeDriverUrl =
+  /// The old chromedriver urls
+  static const String oldChromeDriverUrl =
       'https://chromedriver.storage.googleapis.com/';
+
+  /// new chromedriver urls are queried form this json endpoint.
+  static const String newChromeDriverJsonUrl =
+      'https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json';
 
   String chromeDriverVersion;
 
   io.File? driverDownload;
 
-  String get downloadUrl =>
-      '$chromeDriverUrl$chromeDriverVersion/${driverName()}';
+  String get oldDownloadUrl =>
+      '$oldChromeDriverUrl$chromeDriverVersion/${driverName()}';
+
+  /// Queries the [newChromeDriverJsonUrl] for a download url of the current platform.
+  ///
+  /// returns null if there are no platforms available for that version.
+  Future<String?> tryFindNewDownloadUrl() async {
+    final platformName = driverPlatformName();
+    final jsonResponse = await get(Uri.parse(newChromeDriverJsonUrl));
+    final decodedBody = jsonDecode(jsonResponse.body) as Map<String, dynamic>;
+    final versions = (decodedBody['versions'] as List)
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    for (var versionInfo in versions) {
+      final chromedriver = versionInfo['downloads']?['chromedriver'] as List?;
+      if (versionInfo != chromeDriverVersion || chromedriver == null) {
+        continue;
+      }
+      for (var platformInfo in chromedriver) {
+        if (platformInfo is! Map<String, dynamic>) {
+          continue;
+        }
+        if (platformInfo['platform'] == platformName) {
+          return platformInfo['url'];
+        }
+      }
+    }
+    return null;
+  }
 
   io.File get installation =>
       io.File(path.join(driverDir.path, 'chromedriver'));
@@ -155,7 +188,7 @@ class ChromeDriverInstaller {
     }
 
     driverDir.createSync(recursive: true);
-
+    final downloadUrl = await tryFindNewDownloadUrl() ?? oldDownloadUrl;
     print('downloading file from $downloadUrl');
 
     final StreamedResponse download = await client.send(Request(
@@ -201,6 +234,23 @@ class ChromeDriverInstaller {
       return 'chromedriver_linux64.zip';
     } else if (io.Platform.isWindows) {
       return 'chromedriver_win32.zip';
+    } else {
+      throw UnimplementedError('Automated testing not supported on this OS.'
+          'Platform name: ${io.Platform.operatingSystem}');
+    }
+  }
+
+  /// The platform name for the driver.
+  ///
+  /// These are used as JSON keys to fetch the correct download URL
+  /// from the [newChromeDriverJsonUrl] endpoint.
+  static String driverPlatformName() {
+    if (io.Platform.isMacOS) {
+      return 'mac-x64';
+    } else if (io.Platform.isLinux) {
+      return 'linux64';
+    } else if (io.Platform.isWindows) {
+      return 'win32';
     } else {
       throw UnimplementedError('Automated testing not supported on this OS.'
           'Platform name: ${io.Platform.operatingSystem}');
