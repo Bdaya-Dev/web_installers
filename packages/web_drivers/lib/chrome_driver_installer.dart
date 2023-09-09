@@ -17,6 +17,7 @@ class ChromeDriverInstaller {
 
   /// Installation directory for Chrome Driver.
   final io.Directory driverDir = io.Directory('chromedriver');
+  late io.Directory actualDriverDir = driverDir;
 
   /// The old chromedriver urls
   static const String oldChromeDriverUrl =
@@ -63,7 +64,7 @@ class ChromeDriverInstaller {
   }
 
   io.File get installation =>
-      io.File(path.join(driverDir.path, 'chromedriver'));
+      io.File(path.join(actualDriverDir.path, 'chromedriver'));
 
   bool get isInstalled => installation.existsSync();
 
@@ -203,14 +204,17 @@ class ChromeDriverInstaller {
     driverDir.createSync(recursive: true);
     final downloadUrl = await tryFindNewDownloadUrl() ?? oldDownloadUrl;
     print('downloading file from $downloadUrl');
+    final parsedDownloadUrl = Uri.parse(downloadUrl);
+    final StreamedResponse download =
+        await client.send(Request('GET', parsedDownloadUrl));
 
-    final StreamedResponse download = await client.send(Request(
-      'GET',
-      Uri.parse(downloadUrl),
-    ));
-
-    final io.File downloadedFile =
-        io.File(path.join(driverDir.path, driverName()));
+    final io.File downloadedFile = io.File(
+      path.join(
+        driverDir.path,
+        // the file name is the last path segment.
+        parsedDownloadUrl.pathSegments.last,
+      ),
+    );
     await download.stream.pipe(downloadedFile.openWrite());
 
     return downloadedFile;
@@ -221,19 +225,31 @@ class ChromeDriverInstaller {
     final io.ProcessResult unzipResult = await io.Process.run('unzip', <String>[
       driverDownload!.path,
       '-d',
-      driverDir.path,
+      actualDriverDir.path,
     ]);
 
     if (unzipResult.exitCode != 0) {
       throw Exception(
           'Failed to unzip the downloaded Chrome driver ${driverDownload!.path}.\n'
-          'With the driver path ${driverDir.path}\n'
+          'With the driver path ${actualDriverDir.path}\n'
           'The unzip process exited with code ${unzipResult.exitCode}.');
     }
+    final entries = await actualDriverDir.list().toList();
+    if (entries
+        .whereType<io.File>()
+        .any((element) => element.uri.pathSegments.last == 'chromedriver')) {
+      return;
+    }
+    actualDriverDir = entries.whereType<io.Directory>().first;
+    
   }
 
   Future<void> runDriver() async {
-    await io.Process.run('chromedriver/chromedriver', <String>['--port=4444']);
+    if (io.Directory('chromedriver').existsSync()) {
+      //use old structure
+      await io.Process.run(
+          'chromedriver/chromedriver', <String>['--port=4444']);
+    } else {}
   }
 
   /// Driver name for operating system.
